@@ -19,7 +19,7 @@ import Test.Spec.Runner.Node (runSpecAndExitProcess)
 import Type.Proxy (Proxy(..))
 
 -- | The error type flowing through the query helpers below.
-type Query a = ExceptT SQLite.Error Aff a
+type Query a = ExceptT SQLite.SQLiteError Aff a
 
 -- | Opens a fresh, empty in-memory database, failing the test if it can't open.
 withFreshDB :: (DB -> Aff Unit) -> Aff Unit
@@ -54,12 +54,12 @@ prepareQ
   -> Proxy oR
   -> Query (Statement iR oR)
 prepareQ db pin sql pout =
-  withExceptT SQLite.SQLiteException $ ExceptT $ liftEffect $ prepare db pin sql pout
+  withExceptT SQLite.SQLite'Exception $ ExceptT $ liftEffect $ prepare db pin sql pout
 
 -- | `run` lifted into the `Query` monad.
 runQ :: forall iR. Encode { | iR } => Statement iR () -> { | iR } -> Query RunResult
 runQ stmt params =
-  withExceptT SQLite.SQLiteException $ ExceptT $ liftEffect $ run stmt params
+  withExceptT SQLite.SQLite'Exception $ ExceptT $ liftEffect $ run stmt params
 
 setupDB :: Effect (Either Error DB)
 setupDB = runExceptT do

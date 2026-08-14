@@ -1,6 +1,6 @@
 module Node.SQLite
   ( DB
-  , Error(..)
+  , SQLiteError(..)
   , Options
   , RunResult
   , Statement
@@ -140,15 +140,15 @@ foreign import execImpl :: DB -> String -> Effect Unit
 
 -- | Errors that can occur when running a query.
 -- |
--- | * `SQLiteException`: an error thrown by the underlying SQLite engine.
--- | * `DecodeError`: the rows returned by SQLite could not be decoded into the expected PureScript type.
-data Error
-  = SQLiteException Exception.Error
-  | DecodeError Decoding.Error
+-- | * `SQLite'Exception`: an error thrown by the underlying SQLite engine.
+-- | * `SQLite'DecodeError`: the rows returned by SQLite could not be decoded into the expected PureScript type.
+data SQLiteError
+  = SQLite'Exception Exception.Error
+  | SQLite'DecodeError Decoding.Error
 
-instance Show Error where
-  show (SQLiteException err) = "Exception from to Node's SQLite API: " <> show err
-  show (DecodeError err) = "Decoding error: " <> show err
+instance Show SQLiteError where
+  show (SQLite'Exception err) = "Exception from Node's SQLite API: " <> show err
+  show (SQLite'DecodeError err) = "Decoding error: " <> show err
 
 -- | `all` runs a `SELECT` (or any row-returning statement, e.g. a `RETURNING`
 -- | clause) and returns every matching row as an array. Use it when you expect
@@ -160,7 +160,7 @@ all
   => MonadEffect m
   => Statement inputR r
   -> Record inputR
-  -> ExceptT Error m (Array (Record r))
+  -> ExceptT SQLiteError m (Array (Record r))
 all stmt params = do
   -- TODO params are passed unencoded to the FFI. Unlike `run`, there is no
   -- `Encode` constraint / `encode` call. This works only for types whose
@@ -172,8 +172,8 @@ all stmt params = do
   -- 2) `let encodedParams = encode params` and pass that to `allImpl`,
   -- 3) change `allImpl` to accept `SQLEncodedRecord` instead of `Record iR`.
   let tryAll = try (allImpl stmt params)
-  foreignResult <- tryAll <#> lmap SQLiteException # ExceptT # mapExceptT liftEffect
-  withExceptT DecodeError (decode foreignResult)
+  foreignResult <- tryAll <#> lmap SQLite'Exception # ExceptT # mapExceptT liftEffect
+  withExceptT SQLite'DecodeError (decode foreignResult)
 
 foreign import allImpl :: ∀ iR oR. Statement iR oR -> Record iR -> Effect Foreign
 
@@ -187,7 +187,7 @@ get
   => MonadEffect m
   => Statement iR r
   -> Record iR
-  -> ExceptT Error m (Maybe (Record r))
+  -> ExceptT SQLiteError m (Maybe (Record r))
 get stmt params = do
   -- TODO params are passed unencoded to the FFI. Unlike `run`, there is no
   -- `Encode` constraint / `encode` call. This works only for types whose
@@ -199,7 +199,7 @@ get stmt params = do
   -- 2) `let encodedParams = encode params` and pass that to `getImpl`,
   -- 3) change `getImpl` to accept `SQLEncodedRecord` instead of `Record iR`.
   let tryGet = try (getImpl stmt params)
-  foreignResult <- tryGet <#> lmap SQLiteException # ExceptT # mapExceptT liftEffect
-  withExceptT DecodeError (decode foreignResult)
+  foreignResult <- tryGet <#> lmap SQLite'Exception # ExceptT # mapExceptT liftEffect
+  withExceptT SQLite'DecodeError (decode foreignResult)
 
 foreign import getImpl :: ∀ iR oR. Statement iR oR -> Record iR -> Effect Foreign
