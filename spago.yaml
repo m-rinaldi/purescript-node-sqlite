@@ -1,0 +1,34 @@
+package:
+  name: node-sqlite
+  description: PureScript bindings to Node's built-in node:sqlite module
+  publish:
+    version: 0.1.0
+    license: MIT
+    location:
+      githubOwner: m-rinaldi
+      githubRepo: purescript-node-sqlite
+  dependencies:
+    - bifunctors
+    - effect
+    - either
+    - exceptions
+    - foldable-traversable
+    - foreign
+    - integers
+    - lists
+    - maybe
+    - nullable
+    - prelude
+    - record
+    - strings
+    - transformers
+    - unsafe-coerce
+  test:
+    main: Test.Main
+    dependencies:
+      - aff
+      - spec
+      - spec-node
+workspace:
+  packageSet:
+    registry: 77.3.1
