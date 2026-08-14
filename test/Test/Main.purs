@@ -11,7 +11,7 @@ import Effect.Class (liftEffect)
 import Effect.Exception (Error, message)
 import Node.SQLite (DB, RunResult, Statement, all, close, defaultOptions, exec, get, openInMemory, prepare, prepare_, run)
 import Node.SQLite as SQLite
-import SQLite.Encoding (class Encode)
+import Node.SQLite.Encoding (class Encode)
 import Test.Spec (Spec, describe, it)
 import Test.Spec.Assertions (fail, shouldEqual)
 import Test.Spec.Reporter (consoleReporter)

@@ -1,4 +1,4 @@
-module SQLite.Decoding
+module Node.SQLite.Decoding
   ( Error
   , class DecodeNonNull
   , class DecodeSQL

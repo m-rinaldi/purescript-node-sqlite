@@ -1,4 +1,4 @@
-module SQLite.Encoding
+module Node.SQLite.Encoding
   ( SQLEncodedRecord
   , SQLValue(..)
   , class Encode

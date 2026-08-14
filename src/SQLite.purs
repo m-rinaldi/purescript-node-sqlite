@@ -29,9 +29,9 @@ import Effect.Exception (try)
 import Effect.Exception as Exception
 import Foreign (Foreign)
 import Prim.RowList (class RowToList)
-import SQLite.Decoding (class DecodeSQL, decode)
-import SQLite.Decoding as Decoding
-import SQLite.Encoding (class Encode, SQLEncodedRecord, encode)
+import Node.SQLite.Decoding (class DecodeSQL, decode)
+import Node.SQLite.Decoding as Decoding
+import Node.SQLite.Encoding (class Encode, SQLEncodedRecord, encode)
 import Type.Proxy (Proxy(..))
 
 -- |
