@@ -235,6 +235,62 @@ spec =
           )
           \row -> row `shouldEqual` (Nothing :: Maybe { name :: String, quantity :: Number })
 
+    describe "parameters requiring encoding" do
+      -- `all` and `get` mirror `run`: they encode params before binding, so
+      -- params whose runtime representation is not a native SQLite bind type
+      -- (e.g. Boolean, Maybe) are converted correctly.
+      it "binds a Boolean parameter through all" $ withFreshDB \db ->
+        shouldSucceed
+          ( do
+              create <- prepareQ db (Proxy @()) "CREATE TABLE flags (label TEXT, flag INT) STRICT;" (Proxy @())
+              _ <- runQ create {}
+              insert <- prepareQ db (Proxy @(label :: String, flag :: Boolean)) "INSERT INTO flags VALUES (:label, :flag);" (Proxy @())
+              _ <- runQ insert { label: "on", flag: true }
+              _ <- runQ insert { label: "off", flag: false }
+              select <- prepareQ db (Proxy @(flag :: Boolean)) "SELECT label FROM flags WHERE flag = :flag;" (Proxy @(label :: String))
+              all select { flag: true }
+          )
+          \rows -> rows `shouldEqual` [ { label: "on" } ]
+
+      it "binds a Maybe parameter through all" $ withFreshDB \db ->
+        shouldSucceed
+          ( do
+              create <- prepareQ db (Proxy @()) "CREATE TABLE opt (label TEXT, val INT) STRICT;" (Proxy @())
+              _ <- runQ create {}
+              insert <- prepareQ db (Proxy @(label :: String, val :: Maybe Int)) "INSERT INTO opt VALUES (:label, :val);" (Proxy @())
+              _ <- runQ insert { label: "present", val: Just 42 }
+              _ <- runQ insert { label: "absent", val: Nothing }
+              select <- prepareQ db (Proxy @(val :: Maybe Int)) "SELECT label FROM opt WHERE val = :val;" (Proxy @(label :: String))
+              all select { val: Just 42 }
+          )
+          \rows -> rows `shouldEqual` [ { label: "present" } ]
+
+      it "binds a Boolean parameter through get" $ withFreshDB \db ->
+        shouldSucceed
+          ( do
+              create <- prepareQ db (Proxy @()) "CREATE TABLE flags (label TEXT, flag INT) STRICT;" (Proxy @())
+              _ <- runQ create {}
+              insert <- prepareQ db (Proxy @(label :: String, flag :: Boolean)) "INSERT INTO flags VALUES (:label, :flag);" (Proxy @())
+              _ <- runQ insert { label: "on", flag: true }
+              _ <- runQ insert { label: "off", flag: false }
+              select <- prepareQ db (Proxy @(flag :: Boolean)) "SELECT label FROM flags WHERE flag = :flag;" (Proxy @(label :: String))
+              get select { flag: true }
+          )
+          \row -> row `shouldEqual` Just { label: "on" }
+
+      it "binds a Maybe parameter through get" $ withFreshDB \db ->
+        shouldSucceed
+          ( do
+              create <- prepareQ db (Proxy @()) "CREATE TABLE opt (label TEXT, val INT) STRICT;" (Proxy @())
+              _ <- runQ create {}
+              insert <- prepareQ db (Proxy @(label :: String, val :: Maybe Int)) "INSERT INTO opt VALUES (:label, :val);" (Proxy @())
+              _ <- runQ insert { label: "present", val: Just 42 }
+              _ <- runQ insert { label: "absent", val: Nothing }
+              select <- prepareQ db (Proxy @(val :: Maybe Int)) "SELECT label FROM opt WHERE val = :val;" (Proxy @(label :: String))
+              get select { val: Just 42 }
+          )
+          \row -> row `shouldEqual` Just { label: "present" }
+
     describe "decoding Int" do
       it "decodes an INT column directly as Int" $ withDB \db ->
         shouldSucceed

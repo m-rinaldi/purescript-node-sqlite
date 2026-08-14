@@ -157,25 +157,19 @@ all
   :: ∀ @r rl m inputR
    . RowToList r rl
   => DecodeSQL (Array (Record r))
+  => Encode (Record inputR)
   => MonadEffect m
   => Statement inputR r
   -> Record inputR
   -> ExceptT SQLiteError m (Array (Record r))
 all stmt params = do
-  -- TODO params are passed unencoded to the FFI. Unlike `run`, there is no
-  -- `Encode` constraint / `encode` call. This works only for types whose
-  -- runtime representation already matches what SQLite expects (Int, Number,
-  -- String), which is why the current Int-param tests pass. It breaks for types
-  -- that need conversion, e.g. `Maybe v` (Nothing should become null) or
-  -- Boolean (true should become 1).
-  -- Fix (mirroring `run`): 1) add an `Encode (Record inputR)` constraint,
-  -- 2) `let encodedParams = encode params` and pass that to `allImpl`,
-  -- 3) change `allImpl` to accept `SQLEncodedRecord` instead of `Record iR`.
-  let tryAll = try (allImpl stmt params)
+  let tryAll = try (allImpl stmt encodedParams)
   foreignResult <- tryAll <#> lmap SQLite'Exception # ExceptT # mapExceptT liftEffect
   withExceptT SQLite'DecodeError (decode foreignResult)
+  where
+  encodedParams = encode params
 
-foreign import allImpl :: ∀ iR oR. Statement iR oR -> Record iR -> Effect Foreign
+foreign import allImpl :: ∀ iR oR. Statement iR oR -> SQLEncodedRecord -> Effect Foreign
 
 -- | `get` runs a `SELECT` (or any row-returning statement) and returns the
 -- | first matching row, or `Nothing` if no rows matched. Use it for lookups
@@ -184,22 +178,16 @@ get
   :: ∀ @r rl m iR
    . RowToList r rl
   => DecodeSQL (Maybe (Record r))
+  => Encode (Record iR)
   => MonadEffect m
   => Statement iR r
   -> Record iR
   -> ExceptT SQLiteError m (Maybe (Record r))
 get stmt params = do
-  -- TODO params are passed unencoded to the FFI. Unlike `run`, there is no
-  -- `Encode` constraint / `encode` call. This works only for types whose
-  -- runtime representation already matches what SQLite expects (Int, Number,
-  -- String), which is why the current Int-param tests pass. It breaks for types
-  -- that need conversion, e.g. `Maybe v` (Nothing should become null) or
-  -- Boolean (true should become 1).
-  -- Fix (mirroring `run`): 1) add an `Encode (Record iR)` constraint,
-  -- 2) `let encodedParams = encode params` and pass that to `getImpl`,
-  -- 3) change `getImpl` to accept `SQLEncodedRecord` instead of `Record iR`.
-  let tryGet = try (getImpl stmt params)
+  let tryGet = try (getImpl stmt encodedParams)
   foreignResult <- tryGet <#> lmap SQLite'Exception # ExceptT # mapExceptT liftEffect
   withExceptT SQLite'DecodeError (decode foreignResult)
+  where
+  encodedParams = encode params
 
-foreign import getImpl :: ∀ iR oR. Statement iR oR -> Record iR -> Effect Foreign
+foreign import getImpl :: ∀ iR oR. Statement iR oR -> SQLEncodedRecord -> Effect Foreign
