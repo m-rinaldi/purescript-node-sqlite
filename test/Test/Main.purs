@@ -326,6 +326,42 @@ spec =
             , { label: "up", value: 2 }
             ]
 
+    describe "decoding Boolean" do
+      it "round-trips a Boolean through an INT column" $ withFreshDB \db ->
+        -- `EncodeNonNull Boolean` stores false/true as 0/1 and
+        -- `DecodeNonNull Boolean` reads the column as a `Number`, treating 0 as
+        -- false and any other value as true.
+        shouldSucceed
+          ( do
+              create <- prepareQ db (Proxy @()) "CREATE TABLE flags (label TEXT, flag INT) STRICT;" (Proxy @())
+              _ <- runQ create {}
+              insert <- prepareQ db (Proxy @(label :: String, flag :: Boolean)) "INSERT INTO flags VALUES (:label, :flag);" (Proxy @())
+              _ <- runQ insert { label: "on", flag: true }
+              _ <- runQ insert { label: "off", flag: false }
+              select <- prepareQ db (Proxy @()) "SELECT label, flag FROM flags ORDER BY label;" (Proxy @(label :: String, flag :: Boolean))
+              all select {}
+          )
+          \rows -> rows `shouldEqual`
+            [ { label: "off", flag: false }
+            , { label: "on", flag: true }
+            ]
+
+      it "decodes a non-zero INT column as true" $ withFreshDB \db ->
+        shouldSucceed
+          ( do
+              create <- prepareQ db (Proxy @()) "CREATE TABLE flags (label TEXT, flag INT) STRICT;" (Proxy @())
+              _ <- runQ create {}
+              insert <- prepareQ db (Proxy @(label :: String, flag :: Int)) "INSERT INTO flags VALUES (:label, :flag);" (Proxy @())
+              _ <- runQ insert { label: "two", flag: 2 }
+              _ <- runQ insert { label: "zero", flag: 0 }
+              select <- prepareQ db (Proxy @()) "SELECT label, flag FROM flags ORDER BY label;" (Proxy @(label :: String, flag :: Boolean))
+              all select {}
+          )
+          \rows -> rows `shouldEqual`
+            [ { label: "two", flag: true }
+            , { label: "zero", flag: false }
+            ]
+
     describe "Char fields" do
       it "round-trips a Char through a TEXT column" $ withFreshDB \db ->
         -- `EncodeNonNull Char` stores the character as a single-character TEXT
