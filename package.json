@@ -6,7 +6,7 @@
     "sqlite",
     "node"
   ],
-  "author": "m-rinaldi",
+  "author": "Jorge Rinaldi",
   "license": "MIT",
   "description": "PureScript bindings to Node's built-in node:sqlite module",
   "repository": {
