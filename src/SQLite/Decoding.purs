@@ -1,4 +1,4 @@
-module SQLite.Decoding
+module Node.SQLite.Decoding
   ( Error
   , class DecodeNonNull
   , class DecodeSQL
@@ -49,6 +49,9 @@ instance DecodeNonNull Number where
 
 instance DecodeNonNull Int where
   decodeNonNull val = readNumber val <#> round
+
+instance DecodeNonNull Boolean where
+  decodeNonNull val = readNumber val <#> (_ /= 0.0)
 
 class DecodeSQLField (v :: Type) where
   decodeField :: ∀ m. Monad m => Foreign -> ExceptT Error m v

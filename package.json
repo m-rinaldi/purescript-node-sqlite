@@ -6,9 +6,9 @@
     "sqlite",
     "node"
   ],
-  "author": "m-rinaldi",
+  "author": "Jorge Rinaldi",
   "license": "MIT",
-  "description": "PureScript bindings to Node's built-in node:sqlite module",
+  "description": "Typed PureScript API for Node's built-in node:sqlite module",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/m-rinaldi/purescript-node-sqlite.git"
