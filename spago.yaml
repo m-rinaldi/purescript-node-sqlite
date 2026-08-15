@@ -1,6 +1,6 @@
 package:
   name: node-sqlite
-  description: PureScript bindings to Node's built-in node:sqlite module
+  description: Typed PureScript API for Node's built-in node:sqlite module
   publish:
     version: 0.1.0
     license: MIT
