@@ -1,0 +1,117 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  # Manual dry run: Actions -> Release -> "Run workflow", pick a vX.Y.Z *tag* as the ref.
+  # Runs every check but skips publishing unless dry_run is unticked.
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Skip `spago publish` and the GitHub Release"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write # gh release create; also lets spago's no-op `git push origin vX.Y.Z` succeed
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false # never cancel a publish mid-flight
+
+env:
+  NODE_NO_WARNINGS: "1"
+
+jobs:
+  publish:
+    name: Publish ${{ github.ref_name }}
+    runs-on: ubuntu-latest
+    # spago polls the registry job with no timeout of its own; be generous.
+    timeout-minutes: 45
+
+    steps:
+      - name: Require a tag ref
+        if: github.ref_type != 'tag'
+        run: |
+          echo "::error::This workflow must run on a tag (got ${GITHUB_REF}). Use 'Run workflow' and choose a vX.Y.Z tag."
+          exit 1
+
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          # persist-credentials defaults to true and is REQUIRED: `spago publish`
+          # runs `git push origin vX.Y.Z` (a no-op here, the tag already exists).
+
+      - name: Verify tag matches spago.yaml publish.version
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          expected="${tag#v}"
+          # spago.yaml has exactly one `version:` key (package.publish.version).
+          actual="$(sed -nE 's/^[[:space:]]+version:[[:space:]]*"?([0-9]+\.[0-9]+\.[0-9]+)"?[[:space:]]*$/\1/p' spago.yaml | head -n1)"
+          echo "tag=${tag}  spago.yaml publish.version=${actual:-<not found>}"
+          if [ -z "${actual}" ]; then
+            echo "::error::Could not read package.publish.version from spago.yaml"
+            exit 1
+          fi
+          if [ "${expected}" != "${actual}" ]; then
+            echo "::error::Tag ${tag} does not match spago.yaml publish.version ${actual}. Bump the version, commit, and re-tag."
+            exit 1
+          fi
+          # spago publish requires the checked-out ref to be exactly this tag.
+          git describe --tags --exact-match
+
+      - name: Verify tag is reachable from main
+        run: |
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::${GITHUB_REF_NAME} is not an ancestor of origin/main. Release from main."
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Cache spago registry and package sources
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/spago-nodejs
+            .spago
+          key: spago-${{ runner.os }}-${{ hashFiles('spago.lock') }}
+          restore-keys: |
+            spago-${{ runner.os }}-
+
+      - name: Install toolchain (purs, spago)
+        run: npm ci
+
+      - name: Build (pedantic packages)
+        run: npx spago build --pedantic-packages
+
+      - name: Test
+        run: npx spago test
+
+      - name: Verify git tree is clean (spago publish refuses otherwise)
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            git status --porcelain
+            echo "::error::Working tree is dirty after build/test (spago.lock out of date?). Run 'spago build' locally, commit, and re-tag."
+            exit 1
+          fi
+
+      - name: Publish to the PureScript Registry
+        if: github.event_name == 'push' || inputs.dry_run == false
+        run: npx spago publish
+
+      - name: Create GitHub Release
+        if: github.event_name == 'push' || inputs.dry_run == false
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          gh release create "${GITHUB_REF_NAME}" \
+            --verify-tag \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            --notes "Published to the PureScript Registry: https://pursuit.purescript.org/packages/purescript-node-sqlite/${version}"

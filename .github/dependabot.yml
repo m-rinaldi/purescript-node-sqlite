@@ -1,0 +1,20 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    # Bump the ranges in package.json too (not only the lockfile), so a
+    # `purescript` minor shows up as a reviewable change.
+    versioning-strategy: increase
+    groups:
+      purescript-toolchain:
+        patterns: ["purescript", "spago"]

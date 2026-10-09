@@ -1,0 +1,3 @@
+# Automatically request review from the repo owner on every pull request
+# not authored by them (e.g. Dependabot PRs).
+* @m-rinaldi
