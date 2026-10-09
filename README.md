@@ -1,5 +1,7 @@
 # purescript-node-sqlite
 
+[![CI](https://github.com/m-rinaldi/purescript-node-sqlite/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/m-rinaldi/purescript-node-sqlite/actions/workflows/ci.yml)
+
 A typed PureScript API for Node's built-in [`node:sqlite`](https://nodejs.org/api/sqlite.html) module: prepared statements are indexed by row types, so parameter binding and row decoding go through the compiler instead of raw `Foreign` values, and a mismatch between your declared types and what SQLite returns surfaces as a `SQLite'DecodeError` instead of corrupted data.
 
 Since **v22.5.0**, Node.js embeds SQLite natively and exposes it through the `node:sqlite` module, so there is no external database engine to install or link against.
@@ -126,9 +128,27 @@ Parameters and result columns are mapped between PureScript and SQLite as follow
 ## Development
 
 ```sh
-spago build      # compile the library
-spago test       # run the spec suite (requires Node >= 22.5.0)
+npm ci                            # install the pinned purs and spago from package-lock.json
+spago build --pedantic-packages   # compile; fail on unused/missing deps (CI runs this)
+spago test                        # run the spec suite (requires Node >= 22.5.0)
 ```
+
+CI runs the build and tests on Node 22, 24 and 26 for every push to `main` and every pull request.
+
+### Releasing
+
+Releases are published to the [PureScript Registry](https://registry.purescript.org) by the
+`Release` GitHub Actions workflow when a `vX.Y.Z` tag is pushed. Do **not** run `spago publish`
+locally; just push the tag.
+
+1. Bump `package.publish.version` in `spago.yaml` to `X.Y.Z` and run `spago build` so `spago.lock` is current.
+2. Commit on `main`: `git commit -am "Release vX.Y.Z"`, then push.
+3. Tag and push the tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+
+The workflow refuses to publish if the tag does not match `spago.yaml`, the tag is not on
+`main`, or the build/tests fail. It then runs `spago publish` and creates a GitHub Release.
+To rehearse without publishing, open Actions → Release → "Run workflow", select the tag,
+and leave "Skip `spago publish`" ticked.
 
 ## License
 
