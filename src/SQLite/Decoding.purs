@@ -1,13 +1,13 @@
 module Node.SQLite.Decoding
   ( Error
-  , class DecodeNonNull
-  , class DecodeSQL
-  , class DecodeSQLField
-  , class DecodeSQLFields
+  , class Decode
   , decode
-  , decodeField
+  , class DecodeFields
   , decodeFields
-  , decodeNonNull
+  , class DecodeValue
+  , decodeValue
+  , class DecodeNonNullableValue
+  , decodeNonNullableValue
   ) where
 
 import Prelude
@@ -31,86 +31,93 @@ import Type.Proxy (Proxy(..))
 
 type Error = NonEmptyList ForeignError
 
-class DecodeNonNull (v :: Type) where
-  decodeNonNull :: ∀ m. Monad m => Foreign -> ExceptT Error m v
+-- | Extension point. Decodes a single SQL value that is never `NULL` into a
+-- | PureScript type. Add an instance to make a type usable as a column,
+-- | directly or wrapped in `Maybe`.
+class DecodeNonNullableValue (v :: Type) where
+  decodeNonNullableValue :: ∀ m. Monad m => Foreign -> ExceptT Error m v
 
-instance DecodeNonNull String where
-  decodeNonNull val = readString val
+instance DecodeNonNullableValue String where
+  decodeNonNullableValue val = readString val
 
-instance DecodeNonNull Char where
-  decodeNonNull val = do
+instance DecodeNonNullableValue Char where
+  decodeNonNullableValue val = do
     str <- readString val
     case uncons str of
       Just { head } -> pure head
       Nothing -> throwError $ pure $ ForeignError "Expected non-empty string on decoding for Char"
 
-instance DecodeNonNull Number where
-  decodeNonNull val = readNumber val
+instance DecodeNonNullableValue Number where
+  decodeNonNullableValue val = readNumber val
 
-instance DecodeNonNull Int where
-  decodeNonNull val = readNumber val <#> round
+instance DecodeNonNullableValue Int where
+  decodeNonNullableValue val = readNumber val <#> round
 
-instance DecodeNonNull Boolean where
-  decodeNonNull val = readNumber val <#> (_ /= 0.0)
+instance DecodeNonNullableValue Boolean where
+  decodeNonNullableValue val = readNumber val <#> (_ /= 0.0)
 
-class DecodeSQLField (v :: Type) where
-  decodeField :: ∀ m. Monad m => Foreign -> ExceptT Error m v
+-- | One SQL value, `NULL` allowed. Not an extension point: the fallback
+-- | instance below overlaps with any instance written elsewhere, so nullability
+-- | is expressed by wrapping in `Maybe`.
+class DecodeValue (v :: Type) where
+  decodeValue :: ∀ m. Monad m => Foreign -> ExceptT Error m v
 
-instance DecodeNonNull v => DecodeSQLField (Maybe v) where
-  decodeField val
+instance DecodeNonNullableValue v => DecodeValue (Maybe v) where
+  decodeValue val
     | isNull val = pure Nothing
-    | otherwise = Just <$> decodeNonNull val
-else instance DecodeNonNull v => DecodeSQLField v where
-  decodeField = decodeNonNull
+    | otherwise = Just <$> decodeNonNullableValue val
+else instance DecodeNonNullableValue v => DecodeValue v where
+  decodeValue = decodeNonNullableValue
 
-class DecodeSQLFields (rl :: RowList Type) (row :: Row Type) | rl -> row where
+-- | Internal. `RowList` traversal behind the `Decode` instances.
+class DecodeFields (rl :: RowList Type) (row :: Row Type) | rl -> row where
   decodeFields :: ∀ m. Monad m => Proxy rl -> Foreign -> ExceptT Error m (Builder {} (Record row))
 
-instance DecodeSQLFields RowList.Nil () where
+instance DecodeFields RowList.Nil () where
   decodeFields :: ∀ m. Monad m => Proxy RowList.Nil -> Foreign -> ExceptT Error m (Builder {} {})
   decodeFields _ _ = ExceptT $ pure $ Right identity
 
 instance
-  ( DecodeSQLFields tail tailRow
+  ( DecodeFields tail tailRow
   , IsSymbol name
   , Row.Lacks name tailRow
   , Row.Cons name ty tailRow row
-  , DecodeSQLField ty
+  , DecodeValue ty
   ) =>
-  DecodeSQLFields (RowList.Cons name ty tail) row where
+  DecodeFields (RowList.Cons name ty tail) row where
   decodeFields :: ∀ m. Monad m => Proxy (RowList.Cons name ty tail) -> Foreign -> ExceptT Error m (Builder {} (Record row))
   decodeFields _ obj = do
     let name = reflectSymbol (Proxy @name)
     foreignField <- readProp name obj
-    val <- decodeField foreignField
+    val <- decodeValue foreignField
     restBuilder <- decodeFields (Proxy @tail) obj
     pure $ restBuilder >>> Builder.insert (Proxy @name) val
 
-class DecodeSQL (t :: Type) where
+class Decode (t :: Type) where
   decode :: ∀ m. Monad m => Foreign -> ExceptT Error m t
 
 instance
   ( RowToList r rl
-  , DecodeSQLFields rl r
+  , DecodeFields rl r
   ) =>
-  DecodeSQL (Record r) where
+  Decode (Record r) where
   decode foreignObject = do
     builder <- decodeFields (Proxy @rl) foreignObject
     pure $ Builder.build builder {}
 
 instance
   ( RowToList r rl
-  , DecodeSQLFields rl r
+  , DecodeFields rl r
   ) =>
-  DecodeSQL (Maybe (Record r)) where
+  Decode (Maybe (Record r)) where
   decode foreignValue =
     if isUndefined foreignValue then pure Nothing
     else Just <$> decode foreignValue
 
 instance
   ( RowToList r rl
-  , DecodeSQLFields rl r
+  , DecodeFields rl r
   ) =>
-  DecodeSQL (Array (Record r)) where
+  Decode (Array (Record r)) where
   decode foreignArray = readArray foreignArray >>= traverse decode
 

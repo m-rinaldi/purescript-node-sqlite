@@ -155,7 +155,7 @@ spec =
             ]
 
       it "binds Just parameters as the inner value and Nothing as NULL" $ withFreshDB \db ->
-        -- `DecodeSQLField (Maybe v)` is not implemented, so we cannot read a NULL
+        -- `DecodeValue (Maybe v)` is not implemented, so we cannot read a NULL
         -- column back into PureScript. Instead we let SQLite verify what was
         -- stored: `WHERE val = 42` matches only if `Just 42` encoded to the
         -- integer 42, and `WHERE val IS NULL` matches only if `Nothing` encoded
@@ -306,7 +306,7 @@ spec =
             ]
 
       it "rounds a non-integer REAL column to the nearest Int" $ withFreshDB \db ->
-        -- The `DecodeNonNull Int` instance reads the column as a `Number` and
+        -- The `DecodeNonNullableValue Int` instance reads the column as a `Number` and
         -- applies `round`, so fractional SQLite REAL values must come back as
         -- the nearest integer (ties rounding towards positive infinity).
         shouldSucceed
@@ -328,8 +328,8 @@ spec =
 
     describe "decoding Boolean" do
       it "round-trips a Boolean through an INT column" $ withFreshDB \db ->
-        -- `EncodeNonNull Boolean` stores false/true as 0/1 and
-        -- `DecodeNonNull Boolean` reads the column as a `Number`, treating 0 as
+        -- `EncodeNonNullableValue Boolean` stores false/true as 0/1 and
+        -- `DecodeNonNullableValue Boolean` reads the column as a `Number`, treating 0 as
         -- false and any other value as true.
         shouldSucceed
           ( do
@@ -364,8 +364,8 @@ spec =
 
     describe "Char fields" do
       it "round-trips a Char through a TEXT column" $ withFreshDB \db ->
-        -- `EncodeNonNull Char` stores the character as a single-character TEXT
-        -- and `DecodeNonNull Char` reads it back via the first code unit, so a
+        -- `EncodeNonNullableValue Char` stores the character as a single-character TEXT
+        -- and `DecodeNonNullableValue Char` reads it back via the first code unit, so a
         -- bound `Char` param must decode to the same `Char`.
         shouldSucceed
           ( do

@@ -29,9 +29,9 @@ import Effect.Exception (try)
 import Effect.Exception as Exception
 import Foreign (Foreign)
 import Prim.RowList (class RowToList)
-import Node.SQLite.Decoding (class DecodeSQL, decode)
+import Node.SQLite.Decoding (class Decode, decode)
 import Node.SQLite.Decoding as Decoding
-import Node.SQLite.Encoding (class Encode, SQLEncodedRecord, encode)
+import Node.SQLite.Encoding (class Encode, EncodedRecord, encode)
 import Type.Proxy (Proxy(..))
 
 -- |
@@ -128,7 +128,7 @@ run stmt params = runImpl stmt encodedParams # try
   where
   encodedParams = encode params
 
-foreign import runImpl :: ∀ (iR :: Row Type). Statement iR () -> SQLEncodedRecord -> Effect RunResult
+foreign import runImpl :: ∀ (iR :: Row Type). Statement iR () -> EncodedRecord -> Effect RunResult
 
 -- | `exec` takes a raw SQL string and executes it directly (no preparation, no parameters), and returns nothing.
 -- |
@@ -156,7 +156,7 @@ instance Show SQLiteError where
 all
   :: ∀ @r rl m inputR
    . RowToList r rl
-  => DecodeSQL (Array (Record r))
+  => Decode (Array (Record r))
   => Encode (Record inputR)
   => MonadEffect m
   => Statement inputR r
@@ -169,7 +169,7 @@ all stmt params = do
   where
   encodedParams = encode params
 
-foreign import allImpl :: ∀ iR oR. Statement iR oR -> SQLEncodedRecord -> Effect Foreign
+foreign import allImpl :: ∀ iR oR. Statement iR oR -> EncodedRecord -> Effect Foreign
 
 -- | `get` runs a `SELECT` (or any row-returning statement) and returns the
 -- | first matching row, or `Nothing` if no rows matched. Use it for lookups
@@ -177,7 +177,7 @@ foreign import allImpl :: ∀ iR oR. Statement iR oR -> SQLEncodedRecord -> Effe
 get
   :: ∀ @r rl m iR
    . RowToList r rl
-  => DecodeSQL (Maybe (Record r))
+  => Decode (Maybe (Record r))
   => Encode (Record iR)
   => MonadEffect m
   => Statement iR r
@@ -190,4 +190,4 @@ get stmt params = do
   where
   encodedParams = encode params
 
-foreign import getImpl :: ∀ iR oR. Statement iR oR -> SQLEncodedRecord -> Effect Foreign
+foreign import getImpl :: ∀ iR oR. Statement iR oR -> EncodedRecord -> Effect Foreign
