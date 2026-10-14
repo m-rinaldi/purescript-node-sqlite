@@ -1,13 +1,13 @@
 module Node.SQLite.Encoding
-  ( SQLEncodedRecord
+  ( EncodedRecord
   , class Encode
-  , class EncodeNonNull
-  , class EncodeSQLField
-  , class EncodeSQLFields
   , encode
-  , encodeField
+  , class EncodeFields
   , encodeFields
-  , encodedNonNull
+  , class EncodeValue
+  , encodeValue
+  , class EncodeNonNullableValue
+  , encodeNonNullableValue
   ) where
 
 import Prelude
@@ -25,82 +25,89 @@ import Record.Builder (Builder)
 import Record.Builder as Builder
 import Type.Proxy (Proxy(..))
 
-class EncodeNonNull (v :: Type) where
-  encodedNonNull :: v -> EncodedValue
+-- | Extension point. Encodes a PureScript type as a single SQL value that is
+-- | never `NULL`. Add an instance to make a type usable as a column, directly
+-- | or wrapped in `Maybe`.
+class EncodeNonNullableValue (v :: Type) where
+  encodeNonNullableValue :: v -> EncodedValue
 
-instance EncodeNonNull Int where
-  encodedNonNull = encodeInt
+instance EncodeNonNullableValue Int where
+  encodeNonNullableValue = encodeInt
 
-instance EncodeNonNull Boolean where
-  encodedNonNull false = encodeInt 0
-  encodedNonNull true = encodeInt 1
+instance EncodeNonNullableValue Boolean where
+  encodeNonNullableValue false = encodeInt 0
+  encodeNonNullableValue true = encodeInt 1
 
-instance EncodeNonNull Number where
-  encodedNonNull = encodeReal
+instance EncodeNonNullableValue Number where
+  encodeNonNullableValue = encodeReal
 
-instance EncodeNonNull String where
-  encodedNonNull = encodeText
+instance EncodeNonNullableValue String where
+  encodeNonNullableValue = encodeText
 
-instance EncodeNonNull Char where
-  encodedNonNull = singleton >>> encodeText
+instance EncodeNonNullableValue Char where
+  encodeNonNullableValue = singleton >>> encodeText
 
-class EncodeSQLField (v :: Type) where
-  encodeField :: v -> EncodedValue
+-- | One SQL value, `NULL` allowed. Not an extension point: the fallback
+-- | instance below overlaps with any instance written elsewhere, so nullability
+-- | is expressed by wrapping in `Maybe`.
+class EncodeValue (v :: Type) where
+  encodeValue :: v -> EncodedValue
 
--- Maybe only accepts non-null inner types (the EncodeNonNull constraint), so no nested Maybe.
+-- Maybe only accepts non-nullable inner types (the EncodeNonNullableValue constraint), so no nested Maybe.
 -- A single generic Maybe instance is preferred over per-type instances (Maybe Int, Maybe String, ...):
 -- The reason is that NULL is orthogonal to type affinity, so it behaves uniformly for every inner type — the
 -- Nothing -> null / Just v -> encode v logic is identical regardless of v, and is written once here rather than duplicated (and kept in sync) per primitive.
-instance EncodeNonNull v => EncodeSQLField (Maybe v) where
-  encodeField Nothing = null
-  encodeField (Just v) = encodedNonNull v
+instance EncodeNonNullableValue v => EncodeValue (Maybe v) where
+  encodeValue Nothing = null
+  encodeValue (Just v) = encodeNonNullableValue v
 else
--- primitives go through EncodeNonNull
-instance EncodeNonNull v => EncodeSQLField v where
-  encodeField = encodedNonNull
+-- primitives go through EncodeNonNullableValue
+instance EncodeNonNullableValue v => EncodeValue v where
+  encodeValue = encodeNonNullableValue
 
-class EncodeSQLFields (rl :: RowList Type) (r :: Row Type) (encoded :: Row Type) | rl -> r encoded where
+-- | Internal. `RowList` traversal behind the `Encode (Record r)` instance.
+class EncodeFields (rl :: RowList Type) (r :: Row Type) (encoded :: Row Type) | rl -> r encoded where
   encodeFields :: Proxy rl -> Record r -> Builder {} { | encoded }
 
-instance EncodeSQLFields RowList.Nil () () where
+instance EncodeFields RowList.Nil () () where
   encodeFields :: Proxy RowList.Nil -> {} -> Builder {} {}
   encodeFields _ _ = identity
 
 instance
   ( IsSymbol name
-  , EncodeSQLField ty
-  , EncodeSQLFields tail tailR encodedTailR
+  , EncodeValue ty
+  , EncodeFields tail tailR encodedTailR
   , Row.Lacks name tailR
   , Row.Lacks name encodedTailR
   , Row.Cons name ty tailR r
   , Row.Cons name EncodedValue encodedTailR encodedR
   ) =>
-  EncodeSQLFields (RowList.Cons name ty tail) r encodedR where
+  EncodeFields (RowList.Cons name ty tail) r encodedR where
   encodeFields :: Proxy (RowList.Cons name ty tail) -> Record r -> Builder {} { | encodedR }
   encodeFields _ obj =
     let
       (value :: ty) = Record.get (Proxy @name) obj
-      (encodedValue :: EncodedValue) = encodeField value
+      (encodedValue :: EncodedValue) = encodeValue value
       (buildStep :: Builder { | encodedTailR } { | encodedR }) = Builder.insert (Proxy @name) encodedValue
       (objTail :: Record tailR) = Record.delete (Proxy @name) obj
       buildTail = encodeFields (Proxy @tail) objTail
     in
       buildTail >>> buildStep
 
-newtype SQLEncodedRecord = SQLEncodedRecord Foreign
+newtype EncodedRecord = EncodedRecord Foreign
 
 class Encode (v :: Type) where
-  encode :: v -> SQLEncodedRecord
+  encode :: v -> EncodedRecord
 
 instance
   ( RowList.RowToList r rl
-  , EncodeSQLFields rl r er
+  , EncodeFields rl r er
   ) =>
   Encode (Record r) where
-  encode :: Record r -> SQLEncodedRecord
+  encode :: Record r -> EncodedRecord
   encode obj =
     let
       builder = encodeFields (Proxy @rl) obj
       built = Builder.build builder {}
     in
-      SQLEncodedRecord $ unsafeToForeign built
+      EncodedRecord $ unsafeToForeign built
