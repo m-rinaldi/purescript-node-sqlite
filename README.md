@@ -30,46 +30,39 @@ import Prelude
 
 import Control.Monad.Except (runExceptT)
 import Data.Either (Either(..))
-import Data.Maybe (Maybe(..))
 import Effect (Effect)
-import Effect.Class.Console (log, logShow)
+import Effect.Class.Console (logShow)
 import Node.SQLite as SQLite
 import Type.Proxy (Proxy(..))
 
 main :: Effect Unit
 main = do
-  result <- SQLite.openInMemory SQLite.defaultOptions
+  result <- runExceptT do
+    db <- SQLite.openInMemory SQLite.defaultOptions
+
+    -- Create a table.
+    SQLite.exec db "CREATE TABLE fruits (name TEXT, quantity INT) STRICT;"
+
+    -- Insert rows with a prepared statement.
+    insert <- SQLite.prepare db
+      (Proxy @(name :: String, quantity :: Int))
+      "INSERT INTO fruits VALUES (:name, :quantity);"
+      (Proxy @())
+    _ <- SQLite.run insert { name: "apple", quantity: 3 }
+    _ <- SQLite.run insert { name: "pear", quantity: 5 }
+
+    -- Query rows back.
+    select <- SQLite.prepare db
+      (Proxy @(quantity :: Int))
+      "SELECT name, quantity FROM fruits WHERE quantity >= :quantity;"
+      (Proxy @(name :: String, quantity :: Int))
+    rows <- SQLite.all select { quantity: 4 }
+    SQLite.close db
+    pure rows
+
   case result of
     Left err -> logShow err
-    Right db -> do
-      -- Create a table.
-      _ <- SQLite.exec db "CREATE TABLE fruits (name TEXT, quantity INT) STRICT;"
-
-      -- Insert rows with a prepared statement.
-      insert <- SQLite.prepare db
-        (Proxy @(name :: String, quantity :: Int))
-        "INSERT INTO fruits VALUES (:name, :quantity);"
-        (Proxy @())
-      case insert of
-        Left err -> logShow err
-        Right stmt -> do
-          _ <- SQLite.run stmt { name: "apple", quantity: 3 }
-          _ <- SQLite.run stmt { name: "pear", quantity: 5 }
-          pure unit
-
-      -- Query rows back.
-      select <- SQLite.prepare db
-        (Proxy @(quantity :: Int))
-        "SELECT name, quantity FROM fruits WHERE quantity >= :quantity;"
-        (Proxy @(name :: String, quantity :: Int))
-      case select of
-        Left err -> logShow err
-        Right stmt -> do
-          rows <- runExceptT (SQLite.all stmt { quantity: 4 })
-          logShow rows -- Right [{ name: "pear", quantity: 5 }]
-
-      _ <- SQLite.close db
-      pure unit
+    Right rows -> logShow rows -- [{ name: "pear", quantity: 5 }]
 ```
 
 ## API overview
@@ -78,9 +71,9 @@ main = do
 
 | Function | Description |
 | --- | --- |
-| `open :: String -> Options -> Effect (Either Error DB)` | Open a database file at the given path. |
-| `openInMemory :: Options -> Effect (Either Error DB)` | Open a temporary in-memory database. |
-| `close :: DB -> Effect (Either Error Unit)` | Close the connection. |
+| `open :: String -> Options -> ExceptT SQLiteError m DB` | Open a database file at the given path. |
+| `openInMemory :: Options -> ExceptT SQLiteError m DB` | Open a temporary in-memory database. |
+| `close :: DB -> ExceptT SQLiteError m Unit` | Close the connection. |
 | `defaultOptions :: Options` | Sensible defaults (foreign keys on, defensive flag on). |
 
 `Options` mirrors the fields accepted by `node:sqlite`'s `DatabaseSync` constructor: `readOnly`, `enableForeignKeyConstraints`, `enableDoubleQuotedStringLiterals`, `allowExtension`, `timeout`, `allowUnknownNamedParameters`, and `defensive`.
@@ -91,20 +84,20 @@ Prepared statements are typed `Statement inputRow outputRow`. The two `Proxy` ar
 
 | Function | Description |
 | --- | --- |
-| `prepare :: DB -> Proxy inputR -> String -> Proxy outputR -> Effect (Either Error (Statement inputR outputR))` | Compile SQL with explicit input/output row types. |
-| `prepare' :: DB -> String -> Proxy outputR -> Effect (Either Error (Statement () outputR))` | Compile SQL that takes no parameters. |
-| `prepare_ :: DB -> String -> Effect (Either Error (Statement () ()))` | Compile SQL with neither parameters nor result columns. |
+| `prepare :: DB -> Proxy inputR -> String -> Proxy outputR -> ExceptT SQLiteError m (Statement inputR outputR)` | Compile SQL with explicit input/output row types. |
+| `prepare' :: DB -> String -> Proxy outputR -> ExceptT SQLiteError m (Statement () outputR)` | Compile SQL that takes no parameters. |
+| `prepare_ :: DB -> String -> ExceptT SQLiteError m (Statement () ())` | Compile SQL with neither parameters nor result columns. |
 
 ### Executing
 
 | Function | Description |
 | --- | --- |
-| `exec :: DB -> String -> Effect (Either Error Unit)` | Run a raw (possibly multi-statement) SQL script with no parameters. Good for migrations. |
-| `run :: Statement iR () -> { \| iR } -> Effect (Either Error RunResult)` | Run an `INSERT`/`UPDATE`/`DELETE`. Returns `{ changes, lastInsertRowid }`. |
+| `exec :: DB -> String -> ExceptT SQLiteError m Unit` | Run a raw (possibly multi-statement) SQL script with no parameters. Good for migrations. |
+| `run :: Statement iR () -> { \| iR } -> ExceptT SQLiteError m RunResult` | Run an `INSERT`/`UPDATE`/`DELETE`. Returns `{ changes, lastInsertRowid }`. |
 | `all :: Statement iR r -> { \| iR } -> ExceptT SQLiteError m (Array { \| r })` | Run a row-returning statement and collect every row. |
 | `get :: Statement iR r -> { \| iR } -> ExceptT SQLiteError m (Maybe { \| r })` | Run a row-returning statement and take the first row, if any. |
 
-`all` and `get` run in `ExceptT SQLiteError m` so a decoding failure and a SQLite exception share one error channel:
+Every function runs in `ExceptT SQLiteError m` (for any `MonadEffect m`), so a SQLite exception and a decoding failure share one error channel and calls compose in a single `do` block:
 
 ```purescript
 data SQLiteError
