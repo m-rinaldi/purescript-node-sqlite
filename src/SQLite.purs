@@ -19,19 +19,18 @@ module Node.SQLite
 
 import Prelude
 
-import Control.Monad.Except (ExceptT(..), mapExceptT, withExceptT)
+import Control.Monad.Except (ExceptT(..), withExceptT)
 import Data.Bifunctor (lmap)
-import Data.Either (Either)
 import Data.Maybe (Maybe)
 import Effect (Effect)
 import Effect.Class (class MonadEffect, liftEffect)
 import Effect.Exception (try)
 import Effect.Exception as Exception
 import Foreign (Foreign)
-import Prim.RowList (class RowToList)
 import Node.SQLite.Decoding (class Decode, decode)
 import Node.SQLite.Decoding as Decoding
 import Node.SQLite.Encoding (class Encode, EncodedRecord, encode)
+import Prim.RowList (class RowToList)
 import Type.Proxy (Proxy(..))
 
 -- |
@@ -68,11 +67,11 @@ defaultOptions =
   }
 
 -- | Opens a database file at the given path with the provided options.
-open :: String -> Options -> Effect (Either Exception.Error DB)
-open opts = openImpl opts >>> try
+open :: ∀ m. MonadEffect m => String -> Options -> ExceptT SQLiteError m DB
+open path opts = liftSQLite (openImpl path opts)
 
 -- | Opens a temporary in-memory database. The database is gone when closed.
-openInMemory :: Options -> Effect (Either Exception.Error DB)
+openInMemory :: ∀ m. MonadEffect m => Options -> ExceptT SQLiteError m DB
 openInMemory = open ":memory:"
 
 -- | An opaque handle to an open SQLite database.
@@ -81,8 +80,8 @@ foreign import data DB :: Type
 foreign import openImpl :: String -> Options -> Effect DB
 
 -- | Closes the database connection.
-close :: DB -> Effect (Either Exception.Error Unit)
-close = closeImpl >>> try
+close :: ∀ m. MonadEffect m => DB -> ExceptT SQLiteError m Unit
+close db = liftSQLite (closeImpl db)
 
 foreign import closeImpl :: DB -> Effect Unit
 
@@ -93,18 +92,19 @@ foreign import data Statement :: Row Type -> Row Type -> Type
 -- |
 -- | Statements are always tied to a specific DB connection.
 prepare
-  :: ∀ (inputR :: Row Type) (outputR :: Row Type)
-   . DB
+  :: ∀ (inputR :: Row Type) (outputR :: Row Type) m
+   . MonadEffect m
+  => DB
   -> Proxy inputR
   -> String
   -> Proxy outputR
-  -> Effect (Either Exception.Error (Statement inputR outputR))
-prepare db _ sql _ = try (prepareImpl db sql)
+  -> ExceptT SQLiteError m (Statement inputR outputR)
+prepare db _ sql _ = liftSQLite (prepareImpl db sql)
 
-prepare' :: ∀ outputR. DB -> String -> Proxy outputR -> Effect (Either Exception.Error (Statement () outputR))
+prepare' :: ∀ outputR m. MonadEffect m => DB -> String -> Proxy outputR -> ExceptT SQLiteError m (Statement () outputR)
 prepare' db sql = prepare db (Proxy @()) sql
 
-prepare_ :: DB -> String -> Effect (Either Exception.Error (Statement () ()))
+prepare_ :: ∀ m. MonadEffect m => DB -> String -> ExceptT SQLiteError m (Statement () ())
 prepare_ db sql = prepare' db sql (Proxy @())
 
 foreign import prepareImpl :: ∀ iR oR. DB -> String -> Effect (Statement iR oR)
@@ -119,12 +119,13 @@ type RunResult = { changes :: Int, lastInsertRowid :: Number }
 -- |
 -- | It does not return rows, used for `INSERT`, `UPDATE` and `DELETE`.
 run
-  :: ∀ (iR :: Row Type)
+  :: ∀ (iR :: Row Type) m
    . Encode { | iR }
+  => MonadEffect m
   => Statement iR ()
   -> { | iR }
-  -> Effect (Either Exception.Error RunResult)
-run stmt params = runImpl stmt encodedParams # try
+  -> ExceptT SQLiteError m RunResult
+run stmt params = liftSQLite (runImpl stmt encodedParams)
   where
   encodedParams = encode params
 
@@ -133,8 +134,8 @@ foreign import runImpl :: ∀ (iR :: Row Type). Statement iR () -> EncodedRecord
 -- | `exec` takes a raw SQL string and executes it directly (no preparation, no parameters), and returns nothing.
 -- |
 -- | Good for multi-statement scripts like schema migrations.
-exec :: DB -> String -> Effect (Either Exception.Error Unit)
-exec db sql = try (execImpl db sql)
+exec :: ∀ m. MonadEffect m => DB -> String -> ExceptT SQLiteError m Unit
+exec db sql = liftSQLite (execImpl db sql)
 
 foreign import execImpl :: DB -> String -> Effect Unit
 
@@ -162,12 +163,7 @@ all
   => Statement inputR r
   -> Record inputR
   -> ExceptT SQLiteError m (Array (Record r))
-all stmt params = do
-  let tryAll = try (allImpl stmt encodedParams)
-  foreignResult <- tryAll <#> lmap SQLite'Exception # ExceptT # mapExceptT liftEffect
-  withExceptT SQLite'DecodeError (decode foreignResult)
-  where
-  encodedParams = encode params
+all = fetch allImpl
 
 foreign import allImpl :: ∀ iR oR. Statement iR oR -> EncodedRecord -> Effect Foreign
 
@@ -183,11 +179,26 @@ get
   => Statement iR r
   -> Record iR
   -> ExceptT SQLiteError m (Maybe (Record r))
-get stmt params = do
-  let tryGet = try (getImpl stmt encodedParams)
-  foreignResult <- tryGet <#> lmap SQLite'Exception # ExceptT # mapExceptT liftEffect
+get = fetch getImpl
+
+foreign import getImpl :: ∀ iR oR. Statement iR oR -> EncodedRecord -> Effect Foreign
+
+-- | Shared body of `all` and `get`: encode the parameters, run the given FFI
+-- | call through `liftSQLite`, and decode the `Foreign` result into `result`.
+fetch
+  :: ∀ iR oR result m
+   . Encode (Record iR)
+  => Decode result
+  => MonadEffect m
+  => (Statement iR oR -> EncodedRecord -> Effect Foreign)
+  -> Statement iR oR
+  -> Record iR
+  -> ExceptT SQLiteError m result
+fetch impl stmt params = do
+  foreignResult <- liftSQLite (impl stmt encodedParams)
   withExceptT SQLite'DecodeError (decode foreignResult)
   where
   encodedParams = encode params
 
-foreign import getImpl :: ∀ iR oR. Statement iR oR -> EncodedRecord -> Effect Foreign
+liftSQLite :: ∀ a m. MonadEffect m => Effect a -> ExceptT SQLiteError m a
+liftSQLite call = try call <#> lmap SQLite'Exception # liftEffect # ExceptT
