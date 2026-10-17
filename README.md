@@ -33,7 +33,6 @@ import Data.Either (Either(..))
 import Effect (Effect)
 import Effect.Class.Console (logShow)
 import Node.SQLite as SQLite
-import Type.Proxy (Proxy(..))
 
 main :: Effect Unit
 main = do
@@ -44,18 +43,14 @@ main = do
     SQLite.exec db "CREATE TABLE fruits (name TEXT, quantity INT) STRICT;"
 
     -- Insert rows with a prepared statement.
-    insert <- SQLite.prepare db
-      (Proxy @(name :: String, quantity :: Int))
+    insert <- SQLite.prepare @(name :: String, quantity :: Int) @() db
       "INSERT INTO fruits VALUES (:name, :quantity);"
-      (Proxy @())
     _ <- SQLite.run insert { name: "apple", quantity: 3 }
     _ <- SQLite.run insert { name: "pear", quantity: 5 }
 
     -- Query rows back.
-    select <- SQLite.prepare db
-      (Proxy @(quantity :: Int))
+    select <- SQLite.prepare @(quantity :: Int) @(name :: String, quantity :: Int) db
       "SELECT name, quantity FROM fruits WHERE quantity >= :quantity;"
-      (Proxy @(name :: String, quantity :: Int))
     rows <- SQLite.all select { quantity: 4 }
     SQLite.close db
     pure rows
@@ -80,13 +75,11 @@ main = do
 
 ### Statements
 
-Prepared statements are typed `Statement inputRow outputRow`. The two `Proxy` arguments to `prepare` fix the input-parameter row and the output-column row:
+Prepared statements are typed `Statement inputRow outputRow`. The two visible type arguments to `prepare` fix the input-parameter row and the output-column row, in that order. Use `()` for no parameters or no columns, and `@_` to leave one to inference where the context fixes it:
 
 | Function | Description |
 | --- | --- |
-| `prepare :: DB -> Proxy inputR -> String -> Proxy outputR -> ExceptT SQLiteError m (Statement inputR outputR)` | Compile SQL with explicit input/output row types. |
-| `prepare' :: DB -> String -> Proxy outputR -> ExceptT SQLiteError m (Statement () outputR)` | Compile SQL that takes no parameters. |
-| `prepare_ :: DB -> String -> ExceptT SQLiteError m (Statement () ())` | Compile SQL with neither parameters nor result columns. |
+| `prepare @inputR @outputR :: DB -> String -> ExceptT SQLiteError m (Statement inputR outputR)` | Compile SQL with explicit input/output row types. |
 
 ### Executing
 

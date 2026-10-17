@@ -13,8 +13,6 @@ module Node.SQLite
   , open
   , openInMemory
   , prepare
-  , prepare'
-  , prepare_
   , query
   , queryFirst
   , queryOne
@@ -36,7 +34,6 @@ import Node.SQLite.Decoding (class Decode, decode)
 import Node.SQLite.Decoding as Decoding
 import Node.SQLite.Encoding (class Encode, EncodedRecord, encode)
 import Prim.RowList (class RowToList)
-import Type.Proxy (Proxy(..))
 
 -- |
 -- | Options for `open`.
@@ -93,24 +90,25 @@ foreign import closeImpl :: DB -> Effect Unit
 -- | An opaque handle to a compiled prepared statement.
 foreign import data Statement :: Row Type -> Row Type -> Type
 
--- | Compiles a SQL string into a prepared statement.
+-- | Compiles a SQL string into a prepared statement. The two visible type
+-- | arguments are the input-parameter row and the result-column row, in that
+-- | order:
+-- |
+-- | ```purescript
+-- | stmt <- prepare @(id :: Int) @(email :: String) db "SELECT email FROM users WHERE id = :id;"
+-- | ```
+-- |
+-- | Use `()` for no parameters or no columns, and `@_` to leave one to
+-- | inference where the context fixes it.
 -- |
 -- | Statements are always tied to a specific DB connection.
 prepare
-  :: ∀ (inputR :: Row Type) (outputR :: Row Type) m
+  :: ∀ @inputR @outputR m
    . MonadEffect m
   => DB
-  -> Proxy inputR
   -> String
-  -> Proxy outputR
   -> ExceptT SQLiteError m (Statement inputR outputR)
-prepare db _ sql _ = liftSQLite (prepareImpl db sql)
-
-prepare' :: ∀ outputR m. MonadEffect m => DB -> String -> Proxy outputR -> ExceptT SQLiteError m (Statement () outputR)
-prepare' db sql = prepare db (Proxy @()) sql
-
-prepare_ :: ∀ m. MonadEffect m => DB -> String -> ExceptT SQLiteError m (Statement () ())
-prepare_ db sql = prepare' db sql (Proxy @())
+prepare db sql = liftSQLite (prepareImpl db sql)
 
 foreign import prepareImpl :: ∀ iR oR. DB -> String -> Effect (Statement iR oR)
 
@@ -160,7 +158,7 @@ instance Show SQLiteError where
 -- | clause) and returns every matching row as an array. Use it when you expect
 -- | zero or more rows.
 all
-  :: ∀ @r rl m inputR
+  :: ∀ r rl m inputR
    . RowToList r rl
   => Decode (Array (Record r))
   => Encode (Record inputR)
@@ -176,7 +174,7 @@ foreign import allImpl :: ∀ iR oR. Statement iR oR -> EncodedRecord -> Effect 
 -- | first matching row, or `Nothing` if no rows matched. Use it for lookups
 -- | that yield at most one row (e.g. a primary-key or `LIMIT 1` query).
 get
-  :: ∀ @r rl m iR
+  :: ∀ r rl m iR
    . RowToList r rl
   => Decode (Maybe (Record r))
   => Encode (Record iR)
@@ -209,7 +207,7 @@ query
   -> Record iR
   -> ExceptT SQLiteError m (Array (Record r))
 query db sql params = do
-  stmt <- prepare db (Proxy @iR) sql (Proxy @r)
+  stmt <- prepare @iR @r db sql
   all stmt params
 
 -- | One-shot `get`: like `query`, but only the first row, or `Nothing` if
@@ -225,7 +223,7 @@ queryFirst
   -> Record iR
   -> ExceptT SQLiteError m (Maybe (Record r))
 queryFirst db sql params = do
-  stmt <- prepare db (Proxy @iR) sql (Proxy @r)
+  stmt <- prepare @iR @r db sql
   get stmt params
 
 -- | `queryFirst` for statements that always yield a row (`SELECT count(*)
@@ -267,7 +265,7 @@ command
   -> Record iR
   -> ExceptT SQLiteError m RunResult
 command db sql params = do
-  stmt <- prepare db (Proxy @iR) sql (Proxy @())
+  stmt <- prepare @iR @() db sql
   run stmt params
 
 -- | Shared body of `all` and `get`: encode the parameters, run the given FFI
