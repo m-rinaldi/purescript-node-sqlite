@@ -7,13 +7,12 @@ import Data.Either (Either(..))
 import Data.Maybe (Maybe(..))
 import Effect (Effect)
 import Effect.Aff (Aff)
-import Node.SQLite (DB, all, close, command, defaultOptions, exec, get, openInMemory, prepare, prepare_, query, queryFirst, queryOne, run)
+import Node.SQLite (DB, all, close, command, defaultOptions, exec, get, openInMemory, prepare, query, queryFirst, queryOne, run)
 import Node.SQLite as SQLite
 import Test.Spec (Spec, describe, it)
 import Test.Spec.Assertions (fail, shouldEqual)
 import Test.Spec.Reporter (consoleReporter)
 import Test.Spec.Runner.Node (runSpecAndExitProcess)
-import Type.Proxy (Proxy(..))
 
 -- | The error type flowing through the query helpers below.
 type Query a = ExceptT SQLite.SQLiteError Aff a
@@ -63,10 +62,26 @@ spec =
 
     describe "prepare" do
       it "fails on invalid SQL" $ withFreshDB \db -> do
-        result <- runExceptT $ prepare_ db "THIS IS NOT SQL;"
+        result <- runExceptT $ prepare @() @() db "THIS IS NOT SQL;"
         case result of
           Left _ -> pure unit
           Right _ -> fail "expected prepare to reject invalid SQL"
+
+      it "infers the input row from a wildcard" $ withDB \db ->
+        shouldSucceed
+          ( do
+              stmt <- prepare @_ @(name :: String) db "SELECT name FROM fruits WHERE quantity = :quantity;"
+              get stmt { quantity: 165 }
+          )
+          \row -> row `shouldEqual` Just { name: "Date" }
+
+      it "infers both rows when the context fixes them" $ withDB \db ->
+        shouldSucceed
+          ( do
+              stmt <- prepare db "SELECT name FROM fruits WHERE quantity = :quantity;"
+              get stmt { quantity: 165 }
+          )
+          \row -> row `shouldEqual` Just { name: "Date" }
 
     describe "exec" do
       it "runs a multi-statement script" $ withFreshDB \db -> do
@@ -77,7 +92,7 @@ spec =
           Right _ ->
             shouldSucceed
               ( do
-                  stmt <- prepare db (Proxy @()) "SELECT x FROM t ORDER BY x;" (Proxy @(x :: Number))
+                  stmt <- prepare @() @(x :: Number) db "SELECT x FROM t ORDER BY x;"
                   all stmt {}
               )
               \rows -> rows `shouldEqual` [ { x: 10.0 }, { x: 20.0 } ]
@@ -86,9 +101,9 @@ spec =
       it "reports the number of changed rows" $ withFreshDB \db ->
         shouldSucceed
           ( do
-              create <- prepare db (Proxy @()) "CREATE TABLE t (x INT) STRICT;" (Proxy @())
+              create <- prepare @() @() db "CREATE TABLE t (x INT) STRICT;"
               _ <- run create {}
-              insert <- prepare db (Proxy @()) "INSERT INTO t VALUES (1), (2), (3);" (Proxy @())
+              insert <- prepare @() @() db "INSERT INTO t VALUES (1), (2), (3);"
               run insert {}
           )
           \result -> result.changes `shouldEqual` 3
@@ -96,9 +111,9 @@ spec =
       it "reports a positive lastInsertRowid" $ withFreshDB \db ->
         shouldSucceed
           ( do
-              create <- prepare db (Proxy @()) "CREATE TABLE t (x INT) STRICT;" (Proxy @())
+              create <- prepare @() @() db "CREATE TABLE t (x INT) STRICT;"
               _ <- run create {}
-              insert <- prepare db (Proxy @()) "INSERT INTO t VALUES (1);" (Proxy @())
+              insert <- prepare @() @() db "INSERT INTO t VALUES (1);"
               run insert {}
           )
           \result -> (result.lastInsertRowid > 0.0) `shouldEqual` true
@@ -106,11 +121,11 @@ spec =
       it "binds String and Int parameters" $ withFreshDB \db ->
         shouldSucceed
           ( do
-              create <- prepare db (Proxy @()) "CREATE TABLE people (name TEXT, age INT) STRICT;" (Proxy @())
+              create <- prepare @() @() db "CREATE TABLE people (name TEXT, age INT) STRICT;"
               _ <- run create {}
-              insert <- prepare db (Proxy @(name :: String, age :: Int)) "INSERT INTO people VALUES (:name, :age);" (Proxy @())
+              insert <- prepare @(name :: String, age :: Int) @() db "INSERT INTO people VALUES (:name, :age);"
               _ <- run insert { name: "Alice", age: 30 }
-              select <- prepare db (Proxy @()) "SELECT name, age FROM people;" (Proxy @(name :: String, age :: Number))
+              select <- prepare @() @(name :: String, age :: Number) db "SELECT name, age FROM people;"
               all select {}
           )
           \rows -> rows `shouldEqual` [ { name: "Alice", age: 30.0 } ]
@@ -122,12 +137,12 @@ spec =
         -- 0.0/1.0. (An un-encoded Boolean would not become an integer.)
         shouldSucceed
           ( do
-              create <- prepare db (Proxy @()) "CREATE TABLE flags (label TEXT, flag INT) STRICT;" (Proxy @())
+              create <- prepare @() @() db "CREATE TABLE flags (label TEXT, flag INT) STRICT;"
               _ <- run create {}
-              insert <- prepare db (Proxy @(label :: String, flag :: Boolean)) "INSERT INTO flags VALUES (:label, :flag);" (Proxy @())
+              insert <- prepare @(label :: String, flag :: Boolean) @() db "INSERT INTO flags VALUES (:label, :flag);"
               _ <- run insert { label: "on", flag: true }
               _ <- run insert { label: "off", flag: false }
-              select <- prepare db (Proxy @()) "SELECT label, flag FROM flags ORDER BY flag;" (Proxy @(label :: String, flag :: Number))
+              select <- prepare @() @(label :: String, flag :: Number) db "SELECT label, flag FROM flags ORDER BY flag;"
               all select {}
           )
           \rows -> rows `shouldEqual`
@@ -143,14 +158,14 @@ spec =
         -- to real SQL NULL. Only the plain `label` string is ever decoded.
         shouldSucceed
           ( do
-              create <- prepare db (Proxy @()) "CREATE TABLE opt (label TEXT, val INT) STRICT;" (Proxy @())
+              create <- prepare @() @() db "CREATE TABLE opt (label TEXT, val INT) STRICT;"
               _ <- run create {}
-              insert <- prepare db (Proxy @(label :: String, val :: Maybe Int)) "INSERT INTO opt VALUES (:label, :val);" (Proxy @())
+              insert <- prepare @(label :: String, val :: Maybe Int) @() db "INSERT INTO opt VALUES (:label, :val);"
               _ <- run insert { label: "present", val: Just 42 }
               _ <- run insert { label: "absent", val: Nothing }
-              present <- prepare db (Proxy @()) "SELECT label FROM opt WHERE val = 42;" (Proxy @(label :: String))
+              present <- prepare @() @(label :: String) db "SELECT label FROM opt WHERE val = 42;"
               justRow <- all present {}
-              missing <- prepare db (Proxy @()) "SELECT label FROM opt WHERE val IS NULL;" (Proxy @(label :: String))
+              missing <- prepare @() @(label :: String) db "SELECT label FROM opt WHERE val IS NULL;"
               nullRow <- all missing {}
               pure { justRow, nullRow }
           )
@@ -162,7 +177,7 @@ spec =
       it "returns all rows" $ withDB \db ->
         shouldSucceed
           ( do
-              stmt <- prepare db (Proxy @()) "SELECT name, quantity FROM fruits ORDER BY name;" (Proxy @(name :: String, quantity :: Number))
+              stmt <- prepare @() @(name :: String, quantity :: Number) db "SELECT name, quantity FROM fruits ORDER BY name;"
               all stmt {}
           )
           \rows -> rows `shouldEqual`
@@ -175,7 +190,7 @@ spec =
       it "returns an empty array when no rows match" $ withDB \db ->
         shouldSucceed
           ( do
-              stmt <- prepare db (Proxy @()) "SELECT name, quantity FROM fruits WHERE quantity = 999;" (Proxy @(name :: String, quantity :: Number))
+              stmt <- prepare @() @(name :: String, quantity :: Number) db "SELECT name, quantity FROM fruits WHERE quantity = 999;"
               all stmt {}
           )
           \rows -> rows `shouldEqual` ([] :: Array { name :: String, quantity :: Number })
@@ -183,7 +198,7 @@ spec =
       it "filters rows with an Int parameter" $ withDB \db ->
         shouldSucceed
           ( do
-              stmt <- prepare db (Proxy @(quantity :: Int)) "SELECT name, quantity FROM fruits WHERE quantity = :quantity ORDER BY name;" (Proxy @(name :: String, quantity :: Number))
+              stmt <- prepare @(quantity :: Int) @(name :: String, quantity :: Number) db "SELECT name, quantity FROM fruits WHERE quantity = :quantity ORDER BY name;"
               all stmt { quantity: 158 }
           )
           \rows -> rows `shouldEqual`
@@ -195,7 +210,7 @@ spec =
       it "returns the first matching row" $ withDB \db ->
         shouldSucceed
           ( do
-              stmt <- prepare db (Proxy @()) "SELECT name, quantity FROM fruits WHERE quantity = 165;" (Proxy @(name :: String, quantity :: Number))
+              stmt <- prepare @() @(name :: String, quantity :: Number) db "SELECT name, quantity FROM fruits WHERE quantity = 165;"
               get stmt {}
           )
           \row -> row `shouldEqual` Just { name: "Date", quantity: 165.0 }
@@ -203,7 +218,7 @@ spec =
       it "filters with an Int parameter" $ withDB \db ->
         shouldSucceed
           ( do
-              stmt <- prepare db (Proxy @(quantity :: Int)) "SELECT name, quantity FROM fruits WHERE quantity = :quantity;" (Proxy @(name :: String, quantity :: Number))
+              stmt <- prepare @(quantity :: Int) @(name :: String, quantity :: Number) db "SELECT name, quantity FROM fruits WHERE quantity = :quantity;"
               get stmt { quantity: 165 }
           )
           \row -> row `shouldEqual` Just { name: "Date", quantity: 165.0 }
@@ -211,7 +226,7 @@ spec =
       it "returns Nothing when no row matches" $ withDB \db ->
         shouldSucceed
           ( do
-              stmt <- prepare db (Proxy @()) "SELECT name, quantity FROM fruits WHERE quantity = 999;" (Proxy @(name :: String, quantity :: Number))
+              stmt <- prepare @() @(name :: String, quantity :: Number) db "SELECT name, quantity FROM fruits WHERE quantity = 999;"
               get stmt {}
           )
           \row -> row `shouldEqual` (Nothing :: Maybe { name :: String, quantity :: Number })
@@ -302,12 +317,12 @@ spec =
       it "binds a Boolean parameter through all" $ withFreshDB \db ->
         shouldSucceed
           ( do
-              create <- prepare db (Proxy @()) "CREATE TABLE flags (label TEXT, flag INT) STRICT;" (Proxy @())
+              create <- prepare @() @() db "CREATE TABLE flags (label TEXT, flag INT) STRICT;"
               _ <- run create {}
-              insert <- prepare db (Proxy @(label :: String, flag :: Boolean)) "INSERT INTO flags VALUES (:label, :flag);" (Proxy @())
+              insert <- prepare @(label :: String, flag :: Boolean) @() db "INSERT INTO flags VALUES (:label, :flag);"
               _ <- run insert { label: "on", flag: true }
               _ <- run insert { label: "off", flag: false }
-              select <- prepare db (Proxy @(flag :: Boolean)) "SELECT label FROM flags WHERE flag = :flag;" (Proxy @(label :: String))
+              select <- prepare @(flag :: Boolean) @(label :: String) db "SELECT label FROM flags WHERE flag = :flag;"
               all select { flag: true }
           )
           \rows -> rows `shouldEqual` [ { label: "on" } ]
@@ -315,12 +330,12 @@ spec =
       it "binds a Maybe parameter through all" $ withFreshDB \db ->
         shouldSucceed
           ( do
-              create <- prepare db (Proxy @()) "CREATE TABLE opt (label TEXT, val INT) STRICT;" (Proxy @())
+              create <- prepare @() @() db "CREATE TABLE opt (label TEXT, val INT) STRICT;"
               _ <- run create {}
-              insert <- prepare db (Proxy @(label :: String, val :: Maybe Int)) "INSERT INTO opt VALUES (:label, :val);" (Proxy @())
+              insert <- prepare @(label :: String, val :: Maybe Int) @() db "INSERT INTO opt VALUES (:label, :val);"
               _ <- run insert { label: "present", val: Just 42 }
               _ <- run insert { label: "absent", val: Nothing }
-              select <- prepare db (Proxy @(val :: Maybe Int)) "SELECT label FROM opt WHERE val = :val;" (Proxy @(label :: String))
+              select <- prepare @(val :: Maybe Int) @(label :: String) db "SELECT label FROM opt WHERE val = :val;"
               all select { val: Just 42 }
           )
           \rows -> rows `shouldEqual` [ { label: "present" } ]
@@ -328,12 +343,12 @@ spec =
       it "binds a Boolean parameter through get" $ withFreshDB \db ->
         shouldSucceed
           ( do
-              create <- prepare db (Proxy @()) "CREATE TABLE flags (label TEXT, flag INT) STRICT;" (Proxy @())
+              create <- prepare @() @() db "CREATE TABLE flags (label TEXT, flag INT) STRICT;"
               _ <- run create {}
-              insert <- prepare db (Proxy @(label :: String, flag :: Boolean)) "INSERT INTO flags VALUES (:label, :flag);" (Proxy @())
+              insert <- prepare @(label :: String, flag :: Boolean) @() db "INSERT INTO flags VALUES (:label, :flag);"
               _ <- run insert { label: "on", flag: true }
               _ <- run insert { label: "off", flag: false }
-              select <- prepare db (Proxy @(flag :: Boolean)) "SELECT label FROM flags WHERE flag = :flag;" (Proxy @(label :: String))
+              select <- prepare @(flag :: Boolean) @(label :: String) db "SELECT label FROM flags WHERE flag = :flag;"
               get select { flag: true }
           )
           \row -> row `shouldEqual` Just { label: "on" }
@@ -341,12 +356,12 @@ spec =
       it "binds a Maybe parameter through get" $ withFreshDB \db ->
         shouldSucceed
           ( do
-              create <- prepare db (Proxy @()) "CREATE TABLE opt (label TEXT, val INT) STRICT;" (Proxy @())
+              create <- prepare @() @() db "CREATE TABLE opt (label TEXT, val INT) STRICT;"
               _ <- run create {}
-              insert <- prepare db (Proxy @(label :: String, val :: Maybe Int)) "INSERT INTO opt VALUES (:label, :val);" (Proxy @())
+              insert <- prepare @(label :: String, val :: Maybe Int) @() db "INSERT INTO opt VALUES (:label, :val);"
               _ <- run insert { label: "present", val: Just 42 }
               _ <- run insert { label: "absent", val: Nothing }
-              select <- prepare db (Proxy @(val :: Maybe Int)) "SELECT label FROM opt WHERE val = :val;" (Proxy @(label :: String))
+              select <- prepare @(val :: Maybe Int) @(label :: String) db "SELECT label FROM opt WHERE val = :val;"
               get select { val: Just 42 }
           )
           \row -> row `shouldEqual` Just { label: "present" }
@@ -355,7 +370,7 @@ spec =
       it "decodes an INT column directly as Int" $ withDB \db ->
         shouldSucceed
           ( do
-              stmt <- prepare db (Proxy @()) "SELECT name, quantity FROM fruits ORDER BY name;" (Proxy @(name :: String, quantity :: Int))
+              stmt <- prepare @() @(name :: String, quantity :: Int) db "SELECT name, quantity FROM fruits ORDER BY name;"
               all stmt {}
           )
           \rows -> rows `shouldEqual`
@@ -371,13 +386,13 @@ spec =
         -- the nearest integer (ties rounding towards positive infinity).
         shouldSucceed
           ( do
-              create <- prepare db (Proxy @()) "CREATE TABLE measures (label TEXT, value REAL) STRICT;" (Proxy @())
+              create <- prepare @() @() db "CREATE TABLE measures (label TEXT, value REAL) STRICT;"
               _ <- run create {}
-              insert <- prepare db (Proxy @(label :: String, value :: Number)) "INSERT INTO measures VALUES (:label, :value);" (Proxy @())
+              insert <- prepare @(label :: String, value :: Number) @() db "INSERT INTO measures VALUES (:label, :value);"
               _ <- run insert { label: "down", value: 1.4 }
               _ <- run insert { label: "up", value: 1.6 }
               _ <- run insert { label: "half", value: 2.5 }
-              select <- prepare db (Proxy @()) "SELECT label, value FROM measures ORDER BY label;" (Proxy @(label :: String, value :: Int))
+              select <- prepare @() @(label :: String, value :: Int) db "SELECT label, value FROM measures ORDER BY label;"
               all select {}
           )
           \rows -> rows `shouldEqual`
@@ -393,12 +408,12 @@ spec =
         -- false and any other value as true.
         shouldSucceed
           ( do
-              create <- prepare db (Proxy @()) "CREATE TABLE flags (label TEXT, flag INT) STRICT;" (Proxy @())
+              create <- prepare @() @() db "CREATE TABLE flags (label TEXT, flag INT) STRICT;"
               _ <- run create {}
-              insert <- prepare db (Proxy @(label :: String, flag :: Boolean)) "INSERT INTO flags VALUES (:label, :flag);" (Proxy @())
+              insert <- prepare @(label :: String, flag :: Boolean) @() db "INSERT INTO flags VALUES (:label, :flag);"
               _ <- run insert { label: "on", flag: true }
               _ <- run insert { label: "off", flag: false }
-              select <- prepare db (Proxy @()) "SELECT label, flag FROM flags ORDER BY label;" (Proxy @(label :: String, flag :: Boolean))
+              select <- prepare @() @(label :: String, flag :: Boolean) db "SELECT label, flag FROM flags ORDER BY label;"
               all select {}
           )
           \rows -> rows `shouldEqual`
@@ -409,12 +424,12 @@ spec =
       it "decodes a non-zero INT column as true" $ withFreshDB \db ->
         shouldSucceed
           ( do
-              create <- prepare db (Proxy @()) "CREATE TABLE flags (label TEXT, flag INT) STRICT;" (Proxy @())
+              create <- prepare @() @() db "CREATE TABLE flags (label TEXT, flag INT) STRICT;"
               _ <- run create {}
-              insert <- prepare db (Proxy @(label :: String, flag :: Int)) "INSERT INTO flags VALUES (:label, :flag);" (Proxy @())
+              insert <- prepare @(label :: String, flag :: Int) @() db "INSERT INTO flags VALUES (:label, :flag);"
               _ <- run insert { label: "two", flag: 2 }
               _ <- run insert { label: "zero", flag: 0 }
-              select <- prepare db (Proxy @()) "SELECT label, flag FROM flags ORDER BY label;" (Proxy @(label :: String, flag :: Boolean))
+              select <- prepare @() @(label :: String, flag :: Boolean) db "SELECT label, flag FROM flags ORDER BY label;"
               all select {}
           )
           \rows -> rows `shouldEqual`
@@ -429,12 +444,12 @@ spec =
         -- bound `Char` param must decode to the same `Char`.
         shouldSucceed
           ( do
-              create <- prepare db (Proxy @()) "CREATE TABLE grades (label TEXT, grade TEXT) STRICT;" (Proxy @())
+              create <- prepare @() @() db "CREATE TABLE grades (label TEXT, grade TEXT) STRICT;"
               _ <- run create {}
-              insert <- prepare db (Proxy @(label :: String, grade :: Char)) "INSERT INTO grades VALUES (:label, :grade);" (Proxy @())
+              insert <- prepare @(label :: String, grade :: Char) @() db "INSERT INTO grades VALUES (:label, :grade);"
               _ <- run insert { label: "alice", grade: 'A' }
               _ <- run insert { label: "bob", grade: 'B' }
-              select <- prepare db (Proxy @()) "SELECT label, grade FROM grades ORDER BY label;" (Proxy @(label :: String, grade :: Char))
+              select <- prepare @() @(label :: String, grade :: Char) db "SELECT label, grade FROM grades ORDER BY label;"
               all select {}
           )
           \rows -> rows `shouldEqual`
@@ -445,22 +460,22 @@ spec =
       it "decodes only the first character of a multi-character TEXT column" $ withFreshDB \db ->
         shouldSucceed
           ( do
-              create <- prepare db (Proxy @()) "CREATE TABLE grades (label TEXT, grade TEXT) STRICT;" (Proxy @())
+              create <- prepare @() @() db "CREATE TABLE grades (label TEXT, grade TEXT) STRICT;"
               _ <- run create {}
-              insert <- prepare db (Proxy @(label :: String, grade :: String)) "INSERT INTO grades VALUES (:label, :grade);" (Proxy @())
+              insert <- prepare @(label :: String, grade :: String) @() db "INSERT INTO grades VALUES (:label, :grade);"
               _ <- run insert { label: "alice", grade: "ABC" }
-              select <- prepare db (Proxy @()) "SELECT label, grade FROM grades;" (Proxy @(label :: String, grade :: Char))
+              select <- prepare @() @(label :: String, grade :: Char) db "SELECT label, grade FROM grades;"
               get select {}
           )
           \row -> row `shouldEqual` Just { label: "alice", grade: 'A' }
 
       it "fails to decode an empty TEXT column as Char" $ withFreshDB \db -> do
         result <- runExceptT do
-          create <- prepare db (Proxy @()) "CREATE TABLE grades (label TEXT, grade TEXT) STRICT;" (Proxy @())
+          create <- prepare @() @() db "CREATE TABLE grades (label TEXT, grade TEXT) STRICT;"
           _ <- run create {}
-          insert <- prepare db (Proxy @(label :: String, grade :: String)) "INSERT INTO grades VALUES (:label, :grade);" (Proxy @())
+          insert <- prepare @(label :: String, grade :: String) @() db "INSERT INTO grades VALUES (:label, :grade);"
           _ <- run insert { label: "alice", grade: "" }
-          select <- prepare db (Proxy @()) "SELECT label, grade FROM grades;" (Proxy @(label :: String, grade :: Char))
+          select <- prepare @() @(label :: String, grade :: Char) db "SELECT label, grade FROM grades;"
           get select {}
         case result of
           Left _ -> pure unit
@@ -473,12 +488,12 @@ spec =
         -- stored as SQL NULL and must decode back to `Nothing`.
         shouldSucceed
           ( do
-              create <- prepare db (Proxy @()) "CREATE TABLE opt (label TEXT, val INT) STRICT;" (Proxy @())
+              create <- prepare @() @() db "CREATE TABLE opt (label TEXT, val INT) STRICT;"
               _ <- run create {}
-              insert <- prepare db (Proxy @(label :: String, val :: Maybe Int)) "INSERT INTO opt VALUES (:label, :val);" (Proxy @())
+              insert <- prepare @(label :: String, val :: Maybe Int) @() db "INSERT INTO opt VALUES (:label, :val);"
               _ <- run insert { label: "present", val: Just 42 }
               _ <- run insert { label: "absent", val: Nothing }
-              select <- prepare db (Proxy @()) "SELECT label, val FROM opt ORDER BY label;" (Proxy @(label :: String, val :: Maybe Number))
+              select <- prepare @() @(label :: String, val :: Maybe Number) db "SELECT label, val FROM opt ORDER BY label;"
               all select {}
           )
           \rows -> rows `shouldEqual`
@@ -489,12 +504,12 @@ spec =
       it "decodes a nullable TEXT column as Maybe String" $ withFreshDB \db ->
         shouldSucceed
           ( do
-              create <- prepare db (Proxy @()) "CREATE TABLE notes (id INT, note TEXT) STRICT;" (Proxy @())
+              create <- prepare @() @() db "CREATE TABLE notes (id INT, note TEXT) STRICT;"
               _ <- run create {}
-              insert <- prepare db (Proxy @(id :: Int, note :: Maybe String)) "INSERT INTO notes VALUES (:id, :note);" (Proxy @())
+              insert <- prepare @(id :: Int, note :: Maybe String) @() db "INSERT INTO notes VALUES (:id, :note);"
               _ <- run insert { id: 1, note: Just "hello" }
               _ <- run insert { id: 2, note: Nothing }
-              select <- prepare db (Proxy @()) "SELECT id, note FROM notes ORDER BY id;" (Proxy @(id :: Number, note :: Maybe String))
+              select <- prepare @() @(id :: Number, note :: Maybe String) db "SELECT id, note FROM notes ORDER BY id;"
               all select {}
           )
           \rows -> rows `shouldEqual`
@@ -505,12 +520,12 @@ spec =
       it "decodes a Maybe column through get" $ withFreshDB \db ->
         shouldSucceed
           ( do
-              create <- prepare db (Proxy @()) "CREATE TABLE opt (label TEXT, val INT) STRICT;" (Proxy @())
+              create <- prepare @() @() db "CREATE TABLE opt (label TEXT, val INT) STRICT;"
               _ <- run create {}
-              insert <- prepare db (Proxy @(label :: String, val :: Maybe Int)) "INSERT INTO opt VALUES (:label, :val);" (Proxy @())
+              insert <- prepare @(label :: String, val :: Maybe Int) @() db "INSERT INTO opt VALUES (:label, :val);"
               _ <- run insert { label: "absent", val: Nothing }
               _ <- run insert { label: "present", val: Just 7 }
-              select <- prepare db (Proxy @()) "SELECT label, val FROM opt WHERE label = 'absent';" (Proxy @(label :: String, val :: Maybe Number))
+              select <- prepare @() @(label :: String, val :: Maybe Number) db "SELECT label, val FROM opt WHERE label = 'absent';"
               get select {}
           )
           \row -> row `shouldEqual` Just { label: "absent", val: (Nothing :: Maybe Number) }
