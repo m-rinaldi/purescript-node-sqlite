@@ -7,7 +7,7 @@ import Data.Either (Either(..))
 import Data.Maybe (Maybe(..))
 import Effect (Effect)
 import Effect.Aff (Aff)
-import Node.SQLite (DB, all, close, defaultOptions, exec, get, openInMemory, prepare, prepare_, run)
+import Node.SQLite (DB, all, close, command, defaultOptions, exec, get, openInMemory, prepare, prepare_, query, queryFirst, queryOne, run)
 import Node.SQLite as SQLite
 import Test.Spec (Spec, describe, it)
 import Test.Spec.Assertions (fail, shouldEqual)
@@ -215,6 +215,85 @@ spec =
               get stmt {}
           )
           \row -> row `shouldEqual` (Nothing :: Maybe { name :: String, quantity :: Number })
+
+    describe "query" do
+      it "returns all rows" $ withDB \db ->
+        shouldSucceed
+          (query @(name :: String, quantity :: Number) db "SELECT name, quantity FROM fruits ORDER BY name;" {})
+          \rows -> rows `shouldEqual`
+            [ { name: "Apple", quantity: 158.0 }
+            , { name: "Banana", quantity: 158.0 }
+            , { name: "Cherry", quantity: 162.0 }
+            , { name: "Date", quantity: 165.0 }
+            ]
+
+      it "returns an empty array when no rows match" $ withDB \db ->
+        shouldSucceed
+          (query @(name :: String) db "SELECT name FROM fruits WHERE quantity = 999;" {})
+          \rows -> rows `shouldEqual` ([] :: Array { name :: String })
+
+      it "takes its parameters from the record" $ withDB \db ->
+        shouldSucceed
+          (query @(name :: String) db "SELECT name FROM fruits WHERE quantity = :quantity ORDER BY name;" { quantity: 158 })
+          \rows -> rows `shouldEqual` [ { name: "Apple" }, { name: "Banana" } ]
+
+      it "fails on invalid SQL" $ withDB \db -> do
+        result <- runExceptT $ query @(name :: String) db "THIS IS NOT SQL;" {}
+        case result of
+          Left (SQLite.SQLite'Exception _) -> pure unit
+          Left err -> fail $ "expected SQLite'Exception, got: " <> show err
+          Right _ -> fail "expected query to reject invalid SQL"
+
+    describe "queryFirst" do
+      it "returns the first matching row" $ withDB \db ->
+        shouldSucceed
+          (queryFirst @(name :: String, quantity :: Number) db "SELECT name, quantity FROM fruits WHERE quantity = :quantity;" { quantity: 165 })
+          \row -> row `shouldEqual` Just { name: "Date", quantity: 165.0 }
+
+      it "returns Nothing when no row matches" $ withDB \db ->
+        shouldSucceed
+          (queryFirst @(name :: String) db "SELECT name FROM fruits WHERE quantity = 999;" {})
+          \row -> row `shouldEqual` (Nothing :: Maybe { name :: String })
+
+    describe "queryOne" do
+      it "returns the one row of an aggregate" $ withDB \db ->
+        shouldSucceed
+          (queryOne @(total :: Int) db "SELECT count(*) AS total FROM fruits;" {})
+          \row -> row `shouldEqual` { total: 4 }
+
+      it "returns the row of INSERT ... RETURNING" $ withDB \db ->
+        shouldSucceed
+          (queryOne @(name :: String, quantity :: Int) db "INSERT INTO fruits VALUES (:name, :quantity) RETURNING name, quantity;" { name: "Elderberry", quantity: 7 })
+          \row -> row `shouldEqual` { name: "Elderberry", quantity: 7 }
+
+      it "fails with a decode error when there is no row" $ withDB \db -> do
+        result <- runExceptT $ queryOne @(name :: String) db "SELECT name FROM fruits WHERE quantity = 999;" {}
+        case result of
+          Left (SQLite.SQLite'DecodeError _) -> pure unit
+          Left err -> fail $ "expected SQLite'DecodeError, got: " <> show err
+          Right _ -> fail "expected queryOne to fail on no row"
+
+    describe "command" do
+      it "reports the number of changed rows" $ withDB \db ->
+        shouldSucceed
+          (command db "UPDATE fruits SET quantity = 0 WHERE quantity = :quantity;" { quantity: 158 })
+          \{ changes } -> changes `shouldEqual` 2
+
+      it "reports lastInsertRowid of an INSERT" $ withDB \db ->
+        shouldSucceed
+          ( do
+              { lastInsertRowid } <- command db "INSERT INTO fruits VALUES (:name, :quantity);" { name: "Elderberry", quantity: 7 }
+              row <- queryOne @(name :: String) db "SELECT name FROM fruits WHERE rowid = :rowid;" { rowid: lastInsertRowid }
+              pure row.name
+          )
+          \name -> name `shouldEqual` "Elderberry"
+
+      it "fails on invalid SQL" $ withDB \db -> do
+        result <- runExceptT $ command db "THIS IS NOT SQL;" {}
+        case result of
+          Left (SQLite.SQLite'Exception _) -> pure unit
+          Left err -> fail $ "expected SQLite'Exception, got: " <> show err
+          Right _ -> fail "expected command to reject invalid SQL"
 
     describe "parameters requiring encoding" do
       -- `all` and `get` mirror `run`: they encode params before binding, so

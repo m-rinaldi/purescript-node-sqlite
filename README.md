@@ -97,6 +97,25 @@ Prepared statements are typed `Statement inputRow outputRow`. The two `Proxy` ar
 | `all :: Statement iR r -> { \| iR } -> ExceptT SQLiteError m (Array { \| r })` | Run a row-returning statement and collect every row. |
 | `get :: Statement iR r -> { \| iR } -> ExceptT SQLiteError m (Maybe { \| r })` | Run a row-returning statement and take the first row, if any. |
 
+### One-shot queries
+
+For a statement that runs once, `prepare` and `all`/`get`/`run` can be one call. The parameter row is read off the record you pass; the result row is a visible type argument:
+
+| Function | Description |
+| --- | --- |
+| `query @r :: DB -> String -> { \| iR } -> ExceptT SQLiteError m (Array { \| r })` | Prepare and run once, collecting every row. |
+| `queryFirst @r :: DB -> String -> { \| iR } -> ExceptT SQLiteError m (Maybe { \| r })` | Prepare and run once, taking the first row, if any. |
+| `queryOne @r :: DB -> String -> { \| iR } -> ExceptT SQLiteError m { \| r }` | Like `queryFirst`, for statements that always yield a row (`SELECT count(*) ...`, `INSERT ... RETURNING ...`). No row is a `SQLite'DecodeError`. |
+| `command :: DB -> String -> { \| iR } -> ExceptT SQLiteError m RunResult` | Prepare and run once a statement that returns no rows (`INSERT`/`UPDATE`/`DELETE`). Returns `{ changes, lastInsertRowid }`. |
+
+```purescript
+names <- SQLite.query @(name :: String) db "SELECT name FROM fruits WHERE quantity > :n;" { n: 160 }
+total <- _.total <$> SQLite.queryOne @(total :: Int) db "SELECT count(*) AS total FROM fruits;" {}
+{ changes } <- SQLite.command db "DELETE FROM fruits WHERE quantity < :n;" { n: 160 }
+```
+
+The statement is compiled on every call; a statement that runs many times is still better prepared once.
+
 Every function runs in `ExceptT SQLiteError m` (for any `MonadEffect m`), so a SQLite exception and a decoding failure share one error channel and calls compose in a single `do` block:
 
 ```purescript

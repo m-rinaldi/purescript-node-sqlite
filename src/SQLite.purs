@@ -6,6 +6,7 @@ module Node.SQLite
   , Statement
   , all
   , close
+  , command
   , defaultOptions
   , exec
   , get
@@ -14,19 +15,23 @@ module Node.SQLite
   , prepare
   , prepare'
   , prepare_
+  , query
+  , queryFirst
+  , queryOne
   , run
   ) where
 
 import Prelude
 
-import Control.Monad.Except (ExceptT(..), withExceptT)
+import Control.Monad.Except (ExceptT(..), throwError, withExceptT)
 import Data.Bifunctor (lmap)
-import Data.Maybe (Maybe)
+import Data.List.NonEmpty as NonEmptyList
+import Data.Maybe (Maybe(..))
 import Effect (Effect)
 import Effect.Class (class MonadEffect, liftEffect)
 import Effect.Exception (try)
 import Effect.Exception as Exception
-import Foreign (Foreign)
+import Foreign (Foreign, ForeignError(..))
 import Node.SQLite.Decoding (class Decode, decode)
 import Node.SQLite.Decoding as Decoding
 import Node.SQLite.Encoding (class Encode, EncodedRecord, encode)
@@ -182,6 +187,88 @@ get
 get = fetch getImpl
 
 foreign import getImpl :: ∀ iR oR. Statement iR oR -> EncodedRecord -> Effect Foreign
+
+-- | One-shot `all`: prepares `sql` and runs it once, returning every row.
+-- | The parameter row is taken from the record you pass; the result row is
+-- | the one visible type argument:
+-- |
+-- | ```purescript
+-- | query @(name :: String) db "SELECT name FROM fruits WHERE quantity > :n;" { n: 160 }
+-- | ```
+-- |
+-- | The statement is compiled on every call. For a statement that runs many
+-- | times, `prepare` it once and use `all` instead.
+query
+  :: ∀ @r rl m iR
+   . RowToList r rl
+  => Decode (Array (Record r))
+  => Encode (Record iR)
+  => MonadEffect m
+  => DB
+  -> String
+  -> Record iR
+  -> ExceptT SQLiteError m (Array (Record r))
+query db sql params = do
+  stmt <- prepare db (Proxy @iR) sql (Proxy @r)
+  all stmt params
+
+-- | One-shot `get`: like `query`, but only the first row, or `Nothing` if
+-- | there is none.
+queryFirst
+  :: ∀ @r rl m iR
+   . RowToList r rl
+  => Decode (Maybe (Record r))
+  => Encode (Record iR)
+  => MonadEffect m
+  => DB
+  -> String
+  -> Record iR
+  -> ExceptT SQLiteError m (Maybe (Record r))
+queryFirst db sql params = do
+  stmt <- prepare db (Proxy @iR) sql (Proxy @r)
+  get stmt params
+
+-- | `queryFirst` for statements that always yield a row (`SELECT count(*)
+-- | ...`, `INSERT ... RETURNING ...`), so there is no `Maybe` to unwrap. A
+-- | missing row is reported on the same error channel as an engine or
+-- | decoding failure, as a `SQLite'DecodeError`: the result did not have the
+-- | shape the caller declared. The caller writes no branch for a case that
+-- | cannot happen. Only the first row is taken; a second one is not reported.
+queryOne
+  :: ∀ @r rl m iR
+   . RowToList r rl
+  => Decode (Maybe (Record r))
+  => Encode (Record iR)
+  => MonadEffect m
+  => DB
+  -> String
+  -> Record iR
+  -> ExceptT SQLiteError m (Record r)
+queryOne db sql params = queryFirst db sql params >>= case _ of
+  Just row -> pure row
+  Nothing -> throwError (SQLite'DecodeError (NonEmptyList.singleton (ForeignError "expected one row, got none")))
+
+-- | One-shot `run`: prepares `sql` and runs it once, for statements that
+-- | return no rows (`INSERT`, `UPDATE`, `DELETE`, DDL). The parameter row is
+-- | taken from the record you pass:
+-- |
+-- | ```purescript
+-- | command db "DELETE FROM fruits WHERE quantity < :n;" { n: 160 }
+-- | ```
+-- |
+-- | Unlike `exec`, it binds parameters and reports `{ changes, lastInsertRowid }`,
+-- | and it runs one statement rather than a script.
+command
+  :: ∀ m iR
+   . Encode (Record iR)
+  => MonadEffect m
+  => DB
+  -> String
+  -> Record iR
+  -> ExceptT SQLiteError m RunResult
+command db sql params = do
+  stmt <- prepare db (Proxy @iR) sql (Proxy @())
+  run stmt params
 
 -- | Shared body of `all` and `get`: encode the parameters, run the given FFI
 -- | call through `liftSQLite`, and decode the `Foreign` result into `result`.
