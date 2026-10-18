@@ -20,6 +20,7 @@ import Node.SQLite.Encoding.EncodedValue (EncodedValue, encodeInt, encodeReal, e
 import Prim.Row as Row
 import Prim.RowList (RowList)
 import Prim.RowList as RowList
+import Prim.TypeError (class Fail, Text, Above, Beside, Quote)
 import Record as Record
 import Record.Builder (Builder)
 import Record.Builder as Builder
@@ -46,6 +47,20 @@ instance EncodeNonNullableValue String where
 
 instance EncodeNonNullableValue Char where
   encodeNonNullableValue = singleton >>> encodeText
+
+-- | A parameter is either nullable (`Maybe a`) or not (`a`). `Maybe (Maybe a)`
+-- | has no meaning for a single SQL value, so reject it with a clear message.
+instance
+  Fail
+    ( Above
+        (Beside (Text "Parameter type ") (Beside (Quote (Maybe (Maybe a))) (Text " nests Maybe twice, but a SQL value is either NULL or not.")))
+        ( Above
+            (Beside (Text "Use ") (Beside (Quote (Maybe a)) (Text " if the parameter can be NULL,")))
+            (Beside (Text "or ") (Beside (Quote a) (Text " if it cannot.")))
+        )
+    ) =>
+  EncodeNonNullableValue (Maybe a) where
+  encodeNonNullableValue _ = null
 
 -- | One SQL value, `NULL` allowed. Not an extension point: the fallback
 -- | instance below overlaps with any instance written elsewhere, so nullability
